@@ -25,6 +25,7 @@ import type { BodyParams, HeaderParams, OutputType, RequestArgs } from "../types
 import { base64FromBytes } from "../utils/base64FromBytes.js";
 import { dataUrlFromBlob } from "../utils/dataUrlFromBlob.js";
 import { delay } from "../utils/delay.js";
+import { selectFetch } from "../utils/selectFetch.js";
 import { omit } from "../utils/omit.js";
 import type { ImageToTextArgs } from "../tasks/cv/imageToText.js";
 import {
@@ -104,6 +105,7 @@ export class ZaiTextToImageTask extends ZaiTask implements TextToImageTaskHelper
 		headers?: Record<string, string>,
 		outputType?: OutputType,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<string | Blob | Record<string, unknown>> {
 		if (!url || !headers) {
 			throw new InferenceClientInputError(`URL and headers are required for 'text-to-image' task`);
@@ -142,7 +144,7 @@ export class ZaiTextToImageTask extends ZaiTask implements TextToImageTaskHelper
 		for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
 			await delay(POLL_INTERVAL_MS, signal);
 
-			const resp = await fetch(pollUrl, {
+			const resp = await selectFetch(fetchFn)(pollUrl, {
 				method: "GET",
 				headers: pollHeaders,
 				signal,
@@ -186,7 +188,7 @@ export class ZaiTextToImageTask extends ZaiTask implements TextToImageTaskHelper
 					return imageUrl;
 				}
 
-				const imageResponse = await fetch(imageUrl, { signal });
+				const imageResponse = await selectFetch(fetchFn)(imageUrl, { signal });
 				const blob = await imageResponse.blob();
 				return outputType === "dataUrl" ? dataUrlFromBlob(blob) : blob;
 			}
@@ -207,13 +209,13 @@ export class ZaiImageToTextTask extends ZaiTask implements ImageToTextTaskHelper
 		return "/api/paas/v4/layout_parsing";
 	}
 
-	async preparePayloadAsync(args: ImageToTextArgs, signal?: AbortSignal): Promise<RequestArgs> {
+	async preparePayloadAsync(args: ImageToTextArgs, signal?: AbortSignal, fetchFn?: typeof fetch): Promise<RequestArgs> {
 		const blob =
 			"data" in args && args.data instanceof Blob
 				? args.data
 				: "inputs" in args
 					? typeof args.inputs === "string" && isUrl(args.inputs)
-						? await fetch(args.inputs, { signal }).then((r) => r.blob())
+						? await selectFetch(fetchFn)(args.inputs, { signal }).then((r) => r.blob())
 						: args.inputs instanceof Blob
 							? args.inputs
 							: undefined

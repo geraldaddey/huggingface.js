@@ -76,6 +76,7 @@ import type {
 import { TaskProviderHelper } from "./providerHelper.js";
 import { base64FromBytes } from "../utils/base64FromBytes.js";
 import { dataUrlFromBlob } from "../utils/dataUrlFromBlob.js";
+import { selectFetch } from "../utils/selectFetch.js";
 import type { ImageToImageArgs } from "../tasks/cv/imageToImage.js";
 import type { AutomaticSpeechRecognitionArgs } from "../tasks/audio/automaticSpeechRecognition.js";
 import type { AudioToAudioArgs } from "../tasks/audio/audioToAudio.js";
@@ -143,6 +144,7 @@ export class HFInferenceTextToImageTask extends HFInferenceTask implements TextT
 		headers?: HeadersInit,
 		outputType?: OutputType,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<string | Blob | Record<string, unknown>> {
 		if (!response) {
 			throw new InferenceClientProviderOutputError(
@@ -158,11 +160,12 @@ export class HFInferenceTextToImageTask extends HFInferenceTask implements TextT
 				if (outputType === "dataUrl") {
 					return `data:image/jpeg;base64,${base64Data}`;
 				}
+				// data: decoding stays on global fetch; it is not a network request.
 				const base64Response = await fetch(`data:image/jpeg;base64,${base64Data}`, { signal });
 				return await base64Response.blob();
 			}
 			if ("output" in response && Array.isArray(response.output)) {
-				const urlResponse = await fetch(response.output[0], { signal });
+				const urlResponse = await selectFetch(fetchFn)(response.output[0], { signal });
 				const blob = await urlResponse.blob();
 				return outputType === "dataUrl" ? dataUrlFromBlob(blob) : blob;
 			}

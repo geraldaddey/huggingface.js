@@ -21,6 +21,7 @@ import type { AutomaticSpeechRecognitionOutput, ImageSegmentationOutput } from "
 import { isUrl } from "../lib/isUrl.js";
 import type { BodyParams, HeaderParams, InferenceTask, ModelId, OutputType, RequestArgs, UrlParams } from "../types.js";
 import { delay } from "../utils/delay.js";
+import { selectFetch } from "../utils/selectFetch.js";
 import { omit } from "../utils/omit.js";
 import type {
 	AudioToAudioTaskHelper,
@@ -155,6 +156,7 @@ abstract class FalAiQueueTask extends FalAITask {
 		url?: string,
 		headers?: Record<string, string>,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<unknown> {
 		if (!url || !headers) {
 			throw new InferenceClientInputError(`URL and headers are required for ${this.task} task`);
@@ -182,7 +184,7 @@ abstract class FalAiQueueTask extends FalAITask {
 
 		while (status !== "COMPLETED") {
 			await delay(500, signal);
-			const statusResponse = await fetch(statusUrl, { headers, signal });
+			const statusResponse = await selectFetch(fetchFn)(statusUrl, { headers, signal });
 
 			if (!statusResponse.ok) {
 				throw new InferenceClientProviderApiError(
@@ -204,7 +206,7 @@ abstract class FalAiQueueTask extends FalAITask {
 			}
 		}
 
-		const resultResponse = await fetch(resultUrl, { headers, signal });
+		const resultResponse = await selectFetch(fetchFn)(resultUrl, { headers, signal });
 		let result: unknown;
 		try {
 			result = await resultResponse.json();
@@ -275,8 +277,15 @@ export class FalAITextToImageTask extends FalAiQueueTask implements TextToImageT
 		headers?: Record<string, string>,
 		outputType?: OutputType,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<string | Blob | Record<string, unknown>> {
-		const result = (await this.getResponseFromQueueApi(response, url, headers, signal)) as FalAITextToImageOutput;
+		const result = (await this.getResponseFromQueueApi(
+			response,
+			url,
+			headers,
+			signal,
+			fetchFn,
+		)) as FalAITextToImageOutput;
 		if (
 			typeof result === "object" &&
 			"images" in result &&
@@ -292,7 +301,7 @@ export class FalAITextToImageTask extends FalAiQueueTask implements TextToImageT
 			if (outputType === "url") {
 				return result.images[0].url;
 			}
-			const urlResponse = await fetch(result.images[0].url, { signal });
+			const urlResponse = await selectFetch(fetchFn)(result.images[0].url, { signal });
 			const blob = await urlResponse.blob();
 			return outputType === "dataUrl" ? dataUrlFromBlob(blob) : blob;
 		}
@@ -345,8 +354,9 @@ export class FalAIImageToImageTask extends FalAiQueueTask implements ImageToImag
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<Blob> {
-		const result = await this.getResponseFromQueueApi(response, url, headers, signal);
+		const result = await this.getResponseFromQueueApi(response, url, headers, signal, fetchFn);
 
 		if (
 			typeof result === "object" &&
@@ -360,7 +370,7 @@ export class FalAIImageToImageTask extends FalAiQueueTask implements ImageToImag
 			typeof result.images[0].url === "string" &&
 			isUrl(result.images[0].url)
 		) {
-			const urlResponse = await fetch(result.images[0].url, { signal });
+			const urlResponse = await selectFetch(fetchFn)(result.images[0].url, { signal });
 			return await urlResponse.blob();
 		} else {
 			throw new InferenceClientProviderOutputError(
@@ -423,8 +433,9 @@ export class FalAITextToVideoTask extends FalAiQueueTask implements TextToVideoT
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<Blob> {
-		const result = await this.getResponseFromQueueApi(response, url, headers, signal);
+		const result = await this.getResponseFromQueueApi(response, url, headers, signal, fetchFn);
 
 		if (
 			typeof result === "object" &&
@@ -436,7 +447,7 @@ export class FalAITextToVideoTask extends FalAiQueueTask implements TextToVideoT
 			typeof result.video.url === "string" &&
 			isUrl(result.video.url)
 		) {
-			const urlResponse = await fetch(result.video.url, { signal });
+			const urlResponse = await selectFetch(fetchFn)(result.video.url, { signal });
 			return await urlResponse.blob();
 		} else {
 			throw new InferenceClientProviderOutputError(
@@ -495,8 +506,9 @@ export class FalAIImageToVideoTask extends FalAiQueueTask implements ImageToVide
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<Blob> {
-		const result = await this.getResponseFromQueueApi(response, url, headers, signal);
+		const result = await this.getResponseFromQueueApi(response, url, headers, signal, fetchFn);
 
 		if (
 			typeof result === "object" &&
@@ -509,7 +521,7 @@ export class FalAIImageToVideoTask extends FalAiQueueTask implements ImageToVide
 			"url" in result.video &&
 			isUrl(result.video.url)
 		) {
-			const urlResponse = await fetch(result.video.url, { signal });
+			const urlResponse = await selectFetch(fetchFn)(result.video.url, { signal });
 			return await urlResponse.blob();
 		}
 
@@ -601,6 +613,7 @@ export class FalAITextToSpeechTask extends FalAITask {
 		_headers?: HeadersInit,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<Blob> {
 		const res = response as FalAITextToSpeechOutput;
 		if (typeof res?.audio?.url !== "string") {
@@ -610,7 +623,7 @@ export class FalAITextToSpeechTask extends FalAITask {
 				)}`,
 			);
 		}
-		const urlResponse = await fetch(res.audio.url, { signal });
+		const urlResponse = await selectFetch(fetchFn)(res.audio.url, { signal });
 		if (!urlResponse.ok) {
 			throw new InferenceClientProviderApiError(
 				`Failed to fetch audio from ${res.audio.url}: ${urlResponse.statusText}`,
@@ -665,8 +678,15 @@ export class FalAITextToAudioTask extends FalAiQueueTask implements TextToAudioT
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<Blob> {
-		const result = (await this.getResponseFromQueueApi(response, url, headers, signal)) as FalAITextToAudioResult;
+		const result = (await this.getResponseFromQueueApi(
+			response,
+			url,
+			headers,
+			signal,
+			fetchFn,
+		)) as FalAITextToAudioResult;
 		const audio = result.audio_file ?? result.audio;
 		if (typeof audio !== "object" || !audio || typeof audio.url !== "string" || !isUrl(audio.url)) {
 			throw new InferenceClientProviderOutputError(
@@ -676,7 +696,7 @@ export class FalAITextToAudioTask extends FalAiQueueTask implements TextToAudioT
 			);
 		}
 
-		const audioResponse = await fetch(audio.url, { signal });
+		const audioResponse = await selectFetch(fetchFn)(audio.url, { signal });
 		if (!audioResponse.ok) {
 			throw new InferenceClientProviderApiError(
 				`Failed to fetch audio from ${audio.url}: ${audioResponse.statusText}`,
@@ -731,8 +751,15 @@ export class FalAIAudioToAudioTask extends FalAiQueueTask implements AudioToAudi
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<AudioToAudioOutput[]> {
-		const result = (await this.getResponseFromQueueApi(response, url, headers, signal)) as FalAIAudioToAudioResult;
+		const result = (await this.getResponseFromQueueApi(
+			response,
+			url,
+			headers,
+			signal,
+			fetchFn,
+		)) as FalAIAudioToAudioResult;
 		if (
 			typeof result !== "object" ||
 			!result ||
@@ -748,7 +775,7 @@ export class FalAIAudioToAudioTask extends FalAiQueueTask implements AudioToAudi
 			);
 		}
 
-		const audioResponse = await fetch(result.audio.url, { signal });
+		const audioResponse = await selectFetch(fetchFn)(result.audio.url, { signal });
 		if (!audioResponse.ok) {
 			throw new InferenceClientProviderApiError(
 				`Failed to fetch audio from ${result.audio.url}: ${audioResponse.statusText}`,
@@ -808,8 +835,9 @@ export class FalAIImageSegmentationTask extends FalAiQueueTask implements ImageS
 		headers?: Record<string, string>,
 		_outputType?: undefined,
 		signal?: AbortSignal,
+		fetchFn?: typeof fetch,
 	): Promise<ImageSegmentationOutput> {
-		const result = await this.getResponseFromQueueApi(response, url, headers, signal);
+		const result = await this.getResponseFromQueueApi(response, url, headers, signal, fetchFn);
 		if (
 			typeof result === "object" &&
 			result !== null &&
@@ -819,7 +847,7 @@ export class FalAIImageSegmentationTask extends FalAiQueueTask implements ImageS
 			"url" in result.image &&
 			typeof result.image.url === "string"
 		) {
-			const maskResponse = await fetch(result.image.url, { signal });
+			const maskResponse = await selectFetch(fetchFn)(result.image.url, { signal });
 			if (!maskResponse.ok) {
 				throw new InferenceClientProviderApiError(
 					`Failed to fetch segmentation mask from ${result.image.url}`,
